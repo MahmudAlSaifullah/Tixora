@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js 20.9 or newer, on a server or container that keeps running, or a serverless platform plus a scheduler
+- Node.js 26, the version pinned in `package.json` (`"26.x"`) and `.nvmrc`. On Vercel this overrides the project's Node.js setting. Run on a server or container that keeps running, or on a serverless platform plus a scheduler
 - PostgreSQL 14 or newer, with automated backups
 - An https domain. Cameras, secure cookies and gateway callbacks all depend on it
 - An email provider: any SMTP service, or Resend

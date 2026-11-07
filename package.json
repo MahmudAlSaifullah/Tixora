@@ -4,7 +4,7 @@
   "private": true,
   "description": "Tixora - online event ticketing and management platform for Bangladesh",
   "engines": {
-    "node": ">=20.9.0"
+    "node": "26.x"
   },
   "scripts": {
     "dev": "next dev",
@@ -29,7 +29,6 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "cn": "^0.5.2",
     "jsqr": "^1.4.0",
     "lucide-react": "^1.70.0",
     "next": "^16.4.5",

@@ -15,7 +15,7 @@ Online event ticketing and management platform for Bangladesh: a customer websit
 
 ## Getting started
 
-You need Node.js 20.9 or newer and PostgreSQL 14 or newer.
+You need Node.js 26 (pinned in `package.json` and `.nvmrc`) and PostgreSQL 14 or newer.
 
 ```bash
 npm install

@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { NextResponse } from "next/server";
-import { uploadsDir } from "@/server/storage";
+import { uploadPath } from "@/server/storage";
 
 const TYPES: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
 
@@ -15,7 +14,7 @@ export async function GET(_request: Request, context: { params: Promise<{ name: 
   const match = /^[a-f0-9]{32}\.(jpg|png|webp)$/.exec(name);
   if (!match) return new NextResponse("Not found", { status: 404 });
   try {
-    const file = await readFile(path.join(uploadsDir(), name));
+    const file = await readFile(uploadPath(name));
     return new NextResponse(new Uint8Array(file), {
       headers: {
         "Content-Type": TYPES[match[1]],
