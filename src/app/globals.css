@@ -1,0 +1,186 @@
+﻿@import "tailwindcss";
+@import "tw-animate-css";
+
+/* TIXORA design tokens. A deep ink navy base, one electric accent, and the ticket stub as the
+   recurring shape: perforated edges with punched notches appear on cards, tickets and summaries. */
+
+:root {
+  color-scheme: dark;
+  --radius: 0.875rem;
+
+  --background: #090d18;
+  --foreground: #eef1f8;
+  --card: #111729;
+  --card-foreground: #eef1f8;
+  --popover: #141b30;
+  --popover-foreground: #eef1f8;
+  --primary: #5656f5;
+  --primary-foreground: #ffffff;
+  --secondary: #1a2238;
+  --secondary-foreground: #eef1f8;
+  --muted: #161d31;
+  --muted-foreground: #9ca6c0;
+  --accent: #1e2740;
+  --accent-foreground: #eef1f8;
+  --destructive: #e5484d;
+  --destructive-foreground: #ffffff;
+  --border: rgba(255, 255, 255, 0.09);
+  --input: rgba(255, 255, 255, 0.14);
+  --ring: #7c7cff;
+
+  --brand-glow: #8f8fff;
+  --success: #34c77b;
+  --warning: #f5b63f;
+  --danger: #ff6b70;
+
+  /* Chart tokens: validated with the dataviz palette checker against --card. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --chart-grid: #232b42;
+  --chart-axis: #39425c;
+  --chart-muted: #8c95ae;
+  --sidebar: #0d1222;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand-glow: var(--brand-glow);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-sidebar: var(--sidebar);
+
+  --radius-sm: calc(var(--radius) - 6px);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-body), var(--font-bengali), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-heading), var(--font-body), var(--font-bengali), system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 60%, transparent);
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    filter: invert(0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* The ticket perforation: a dashed tear line with a notch punched from each edge.
+   --notch must match whatever sits behind the card. */
+.perforated {
+  position: relative;
+  border-top: 1.5px dashed rgba(255, 255, 255, 0.14);
+}
+.perforated::before,
+.perforated::after {
+  content: "";
+  position: absolute;
+  top: -9px;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--notch, var(--background));
+}
+.perforated::before {
+  left: -9px;
+}
+.perforated::after {
+  right: -9px;
+}
+
+.scroll-rail {
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.scroll-rail::-webkit-scrollbar {
+  display: none;
+}
+.scroll-rail > * {
+  scroll-snap-align: start;
+}
+
+.hero-grain {
+  background:
+    linear-gradient(180deg, rgba(9, 13, 24, 0.62) 0%, rgba(9, 13, 24, 0.5) 45%, var(--background) 100%),
+    radial-gradient(70% 60% at 15% 30%, rgba(86, 86, 245, 0.42), transparent 70%);
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+.qr-frame svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Scanner viewfinder sweep */
+@keyframes scan-sweep {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(calc(var(--scan-size, 240px) - 2px)); }
+}
+.scan-line {
+  animation: scan-sweep 2.4s ease-in-out infinite;
+}
+
+@media print {
+  header, footer, nav, .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+  }
+}

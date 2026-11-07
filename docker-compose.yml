@@ -1,0 +1,15 @@
+# Local PostgreSQL for development. Credentials match .env.example.
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tixora
+      POSTGRES_PASSWORD: tixora_local
+      POSTGRES_DB: tixora
+    ports:
+      - "5432:5432"
+    volumes:
+      - tixora_pg:/var/lib/postgresql
+volumes:
+  tixora_pg:

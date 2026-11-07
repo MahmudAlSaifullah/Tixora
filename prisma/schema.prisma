@@ -1,0 +1,898 @@
+// TIXORA database schema.
+//
+// Conventions
+//  * Money is always an integer in minor units (poisha for BDT) with a sibling currency column.
+//  * Percentages/rates are integer basis points (1250 = 12.5%).
+//  * Invariants Prisma cannot express (CHECK constraints, partial unique indexes)
+//    live in prisma/migrations/*_integrity_constraints/migration.sql.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------- enums
+
+enum RoleKey {
+  CUSTOMER
+  ORGANIZER
+  SCANNER
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum AuthTokenType {
+  EMAIL_VERIFY
+  PASSWORD_RESET
+}
+
+enum OrganizationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum OrgMemberRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum EventStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PUBLISHED
+  REJECTED
+  SOLD_OUT
+  COMPLETED
+  CANCELLED
+  SUSPENDED
+}
+
+enum EventMode {
+  OFFLINE
+  ONLINE
+}
+
+enum TicketKind {
+  GENERAL
+  VIP
+  PREMIUM
+  EARLY_BIRD
+  CUSTOM
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum TicketStatus {
+  PENDING
+  VALID
+  USED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  INITIATED
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  REVIEW // paid at the gateway, but the booking could not be honoured - needs a human
+}
+
+enum PaymentMode {
+  SANDBOX
+  LIVE
+}
+
+enum PaymentTransactionType {
+  INITIATE
+  CALLBACK
+  WEBHOOK
+  VERIFY
+  RECONCILE
+  REFUND
+}
+
+enum RefundStatus {
+  REQUESTED
+  PROCESSING
+  COMPLETED
+  REJECTED
+  FAILED
+}
+
+enum DiscountType {
+  FIXED
+  PERCENT
+}
+
+enum CheckInResult {
+  ACCEPTED
+  DUPLICATE
+  INVALID
+  WRONG_EVENT
+  CANCELLED
+  REFUNDED
+  NOT_ACTIVE
+}
+
+enum PayoutStatus {
+  REQUESTED
+  APPROVED
+  PAID
+  REJECTED
+}
+
+enum NotificationType {
+  BOOKING
+  PAYMENT
+  TICKET
+  EVENT
+  REFUND
+  PAYOUT
+  SYSTEM
+}
+
+enum EmailStatus {
+  SENT
+  FAILED
+  LOGGED
+}
+
+// ---------------------------------------------------------------- identity
+
+model Role {
+  id          String   @id @default(cuid())
+  key         RoleKey  @unique
+  name        String
+  description String?
+  users       User[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  name            String
+  phone           String?
+  city            String?
+  image           String?
+  passwordHash    String?
+  emailVerifiedAt DateTime?
+  status          UserStatus @default(ACTIVE)
+  suspendedReason String?
+  /// Bumped to invalidate every outstanding session (password change, suspension).
+  sessionVersion  Int        @default(0)
+  roleId          String
+  role            Role       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  notifyEmail     Boolean    @default(true)
+  notifyReminders Boolean    @default(true)
+  notifyMarketing Boolean    @default(false)
+  lastLoginAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  accounts         Account[]
+  authTokens       AuthToken[]
+  memberships      OrganizationMember[]
+  bookings         Booking[]
+  notifications    Notification[]
+  reviews          Review[]
+  auditLogs        AuditLog[]
+  staffAssignments StaffAssignment[]    @relation("StaffUser")
+  assignedStaff    StaffAssignment[]    @relation("StaffAssigner")
+  checkIns         CheckIn[]
+  devices          ScannerDevice[]
+  promoUsages      PromoCodeUsage[]
+  refundsRequested Refund[]             @relation("RefundRequester")
+  refundsProcessed Refund[]             @relation("RefundProcessor")
+  payoutsRequested Payout[]             @relation("PayoutRequester")
+  payoutsProcessed Payout[]             @relation("PayoutProcessor")
+  eventsApproved   Event[]              @relation("EventApprover")
+
+  @@index([roleId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Account {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String
+  providerAccountId String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model AuthToken {
+  id        String        @id @default(cuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      AuthTokenType
+  /// SHA-256 of the emailed token; the raw token is never stored.
+  tokenHash String        @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  @@index([userId, type])
+}
+
+// ---------------------------------------------------------------- organizers
+
+model Organization {
+  id                  String             @id @default(cuid())
+  name                String
+  slug                String             @unique
+  description         String?
+  logoUrl             String?
+  website             String?
+  email               String?
+  phone               String?
+  address             String?
+  city                String?
+  status              OrganizationStatus @default(PENDING)
+  statusReason        String?
+  /// Per-organizer commission override. Null means the platform default applies.
+  commissionBps       Int?
+  payoutMethod        String?
+  payoutAccountName   String?
+  payoutAccountNumber String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  members     OrganizationMember[]
+  events      Event[]
+  venues      Venue[]
+  bookings    Booking[]
+  promoCodes  PromoCode[]
+  payouts     Payout[]
+  commissions PlatformCommission[]
+  devices     ScannerDevice[]
+
+  @@index([status])
+}
+
+model OrganizationMember {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role           OrgMemberRole @default(STAFF)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------- catalog
+
+model EventCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  icon        String   @default("Sparkles")
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  events     Event[]
+  promoCodes PromoCode[]
+
+  @@index([isActive, sortOrder])
+}
+
+model Venue {
+  id             String        @id @default(cuid())
+  name           String
+  address        String
+  city           String
+  country        String        @default("Bangladesh")
+  latitude       Float?
+  longitude      Float?
+  capacity       Int?
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  events Event[]
+
+  @@index([city])
+  @@index([organizationId])
+}
+
+model Event {
+  id                String      @id @default(cuid())
+  slug              String      @unique
+  title             String
+  shortDescription  String
+  description       String
+  organizerName     String?
+  coverImageUrl     String?
+  organizerLogoUrl  String?
+  status            EventStatus @default(DRAFT)
+  mode              EventMode   @default(OFFLINE)
+  onlineUrl         String?
+  startsAt          DateTime?
+  endsAt            DateTime?
+  timezone          String      @default("Asia/Dhaka")
+  currency          String      @default("BDT")
+  /// [{ "time": "18:00", "title": "Doors open" }]
+  schedule          Json        @default("[]")
+  rules             String?
+  terms             String?
+  refundPolicy      String?
+  ageRestriction    String?
+  instructions      String?
+  guestCheckout     Boolean     @default(false)
+  isFeatured        Boolean     @default(false)
+  /// Seeded sample data, shown with a visible "Demo" label.
+  isDemo            Boolean     @default(false)
+  viewCount         Int         @default(0)
+  rejectionReason   String?
+  submittedAt       DateTime?
+  publishedAt       DateTime?
+  approvedById      String?
+  approvedBy        User?       @relation("EventApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  categoryId        String
+  category          EventCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  organizationId    String
+  organization      Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  venueId           String?
+  venue             Venue?        @relation(fields: [venueId], references: [id], onDelete: SetNull)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  images      EventImage[]
+  ticketTypes TicketType[]
+  bookings    Booking[]
+  tickets     Ticket[]
+  checkIns    CheckIn[]
+  staff       StaffAssignment[]
+  devices     ScannerDevice[]
+  promoCodes  PromoCode[]
+  reviews     Review[]
+  commissions PlatformCommission[]
+
+  @@index([status, startsAt])
+  @@index([categoryId, status])
+  @@index([organizationId, status])
+  @@index([venueId])
+  @@index([isFeatured, status])
+}
+
+model EventImage {
+  id        String   @id @default(cuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([eventId, sortOrder])
+}
+
+// ---------------------------------------------------------------- tickets
+
+model TicketType {
+  id           String     @id @default(cuid())
+  eventId      String
+  event        Event      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  name         String
+  kind         TicketKind @default(GENERAL)
+  description  String?
+  priceMinor   Int
+  currency     String     @default("BDT")
+  salesStartAt DateTime?
+  salesEndAt   DateTime?
+  minPerOrder  Int        @default(1)
+  maxPerOrder  Int        @default(10)
+  /// Lifetime cap per customer across orders; null means only maxPerOrder applies.
+  perUserLimit Int?
+  isActive     Boolean    @default(true)
+  sortOrder    Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  inventory    TicketInventory?
+  bookingItems BookingItem[]
+  tickets      Ticket[]
+  promoCodes   PromoCode[]
+
+  @@index([eventId, sortOrder])
+}
+
+/// The single source of truth for availability: available = total - reserved - sold.
+/// All writes are conditional raw UPDATEs; a CHECK constraint backs them up.
+model TicketInventory {
+  id           String     @id @default(cuid())
+  ticketTypeId String     @unique
+  ticketType   TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+  total        Int
+  reserved     Int        @default(0)
+  sold         Int        @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Booking {
+  id              String        @id @default(cuid())
+  reference       String        @unique
+  /// Client-generated key: retrying the same checkout returns the same booking.
+  idempotencyKey  String?       @unique
+  userId          String?
+  user            User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventId         String
+  event           Event         @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  organizationId  String
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  status          BookingStatus @default(PENDING)
+  contactName     String
+  contactEmail    String
+  contactPhone    String
+  currency        String        @default("BDT")
+  subtotalMinor   Int
+  discountMinor   Int           @default(0)
+  platformFeeMinor Int          @default(0)
+  taxMinor        Int           @default(0)
+  totalMinor      Int
+  promoCodeId     String?
+  promoCode       PromoCode?    @relation(fields: [promoCodeId], references: [id], onDelete: SetNull)
+  /// Reservation deadline. Ignored once the booking is confirmed.
+  expiresAt       DateTime
+  confirmedAt     DateTime?
+  cancelledAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  items      BookingItem[]
+  attendees  Attendee[]
+  tickets    Ticket[]
+  payments   Payment[]
+  refunds    Refund[]
+  promoUsage PromoCodeUsage?
+  commission PlatformCommission?
+
+  @@index([userId, createdAt])
+  @@index([eventId, status])
+  @@index([organizationId, status, createdAt])
+  @@index([status, expiresAt])
+  @@index([contactEmail])
+}
+
+model BookingItem {
+  id             String     @id @default(cuid())
+  bookingId      String
+  booking        Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  ticketTypeId   String
+  ticketType     TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+  /// Snapshots, so later edits to the ticket type never rewrite past orders.
+  ticketTypeName String
+  unitPriceMinor Int
+  quantity       Int
+  lineTotalMinor Int
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  attendees Attendee[]
+  tickets   Ticket[]
+
+  @@unique([bookingId, ticketTypeId])
+  @@index([ticketTypeId])
+}
+
+model Attendee {
+  id            String      @id @default(cuid())
+  bookingId     String
+  booking       Booking     @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingItemId String
+  bookingItem   BookingItem @relation(fields: [bookingItemId], references: [id], onDelete: Cascade)
+  name          String
+  email         String?
+  phone         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  ticket Ticket?
+
+  @@index([bookingId])
+  @@index([bookingItemId])
+}
+
+model Ticket {
+  id            String       @id @default(cuid())
+  /// Human-readable id for support and manual lookup. Never grants entry on its own off-site.
+  code          String       @unique
+  attendeeId    String       @unique
+  attendee      Attendee     @relation(fields: [attendeeId], references: [id], onDelete: Restrict)
+  bookingId     String
+  booking       Booking      @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  bookingItemId String
+  bookingItem   BookingItem  @relation(fields: [bookingItemId], references: [id], onDelete: Restrict)
+  eventId       String
+  event         Event        @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  ticketTypeId  String
+  ticketType    TicketType   @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+  status        TicketStatus @default(VALID)
+  /// Random per-ticket input to the QR token HMAC. Rotating it revokes the old QR.
+  qrNonce       String
+  /// SHA-256 of the QR token, so a database leak does not expose scannable tokens.
+  qrTokenHash   String       @unique
+  checkedInAt   DateTime?
+  issuedAt      DateTime     @default(now())
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  checkIns CheckIn[]
+
+  @@index([bookingId])
+  @@index([eventId, status])
+  @@index([ticketTypeId, status])
+}
+
+// ---------------------------------------------------------------- payments
+
+model Payment {
+  id               String        @id @default(cuid())
+  bookingId        String
+  booking          Booking       @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  gateway          String
+  mode             PaymentMode
+  status           PaymentStatus @default(INITIATED)
+  amountMinor      Int
+  currency         String        @default("BDT")
+  /// Our merchant transaction id, sent to the gateway.
+  merchantTxnId    String        @unique
+  /// The gateway's own reference, e.g. SSLCommerz bank_tran_id or bKash trxID.
+  gatewayTxnId     String?
+  gatewayPaymentId String?
+  /// Instrument reported by the gateway, e.g. "VISA", "bKash".
+  method           String?
+  failureReason    String?
+  refundedMinor    Int           @default(0)
+  paidAt           DateTime?
+  lastCheckedAt    DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  transactions PaymentTransaction[]
+  refunds      Refund[]
+
+  @@index([bookingId])
+  @@index([status, createdAt])
+  @@index([gateway, status])
+  @@index([gatewayTxnId])
+}
+
+/// Append-only log of every gateway interaction. Payloads are scrubbed before storing.
+model PaymentTransaction {
+  id             String                 @id @default(cuid())
+  paymentId      String
+  payment        Payment                @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  type           PaymentTransactionType
+  status         String
+  /// Unique per gateway event: replayed callbacks collapse onto one row.
+  dedupeKey      String?                @unique
+  externalId     String?
+  amountMinor    Int?
+  signatureValid Boolean?
+  payload        Json?
+  createdAt      DateTime               @default(now())
+
+  @@index([paymentId, createdAt])
+}
+
+model Refund {
+  id              String       @id @default(cuid())
+  paymentId       String
+  payment         Payment      @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  bookingId       String
+  booking         Booking      @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  amountMinor     Int
+  reason          String
+  status          RefundStatus @default(REQUESTED)
+  gatewayRefundId String?
+  adminNote       String?
+  requestedById   String?
+  requestedBy     User?        @relation("RefundRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  processedById   String?
+  processedBy     User?        @relation("RefundProcessor", fields: [processedById], references: [id], onDelete: SetNull)
+  processedAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([bookingId])
+  @@index([paymentId])
+  @@index([status, createdAt])
+}
+
+model PlatformCommission {
+  id             String       @id @default(cuid())
+  bookingId      String       @unique
+  booking        Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  eventId        String
+  event          Event        @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  /// Ticket value the commission applies to, after organizer-funded discounts.
+  grossMinor     Int
+  rateBps        Int
+  amountMinor    Int
+  /// grossMinor - amountMinor, reduced by refunds. This is what payouts draw from.
+  organizerNetMinor Int
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@index([eventId])
+}
+
+model Payout {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  amountMinor    Int
+  currency       String       @default("BDT")
+  status         PayoutStatus @default(REQUESTED)
+  method         String
+  accountName    String
+  accountNumber  String
+  note           String?
+  reference      String?
+  requestedById  String?
+  requestedBy    User?        @relation("PayoutRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+  processedById  String?
+  processedBy    User?        @relation("PayoutProcessor", fields: [processedById], references: [id], onDelete: SetNull)
+  processedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, status])
+  @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------- promotions
+
+model PromoCode {
+  id              String       @id @default(cuid())
+  code            String       @unique
+  name            String
+  discountType    DiscountType
+  /// Minor units for FIXED, basis points for PERCENT.
+  discountValue   Int
+  maxDiscountMinor Int?
+  /// Null organizationId = platform campaign, funded by Tixora.
+  organizationId  String?
+  organization    Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  eventId         String?
+  event           Event?        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  ticketTypeId    String?
+  ticketType      TicketType?   @relation(fields: [ticketTypeId], references: [id], onDelete: Cascade)
+  categoryId      String?
+  category        EventCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  usageLimit      Int?
+  perUserLimit    Int?
+  usedCount       Int          @default(0)
+  minOrderMinor   Int          @default(0)
+  startsAt        DateTime?
+  expiresAt       DateTime?
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  usages   PromoCodeUsage[]
+  bookings Booking[]
+
+  @@index([organizationId])
+  @@index([eventId])
+  @@index([isActive, expiresAt])
+}
+
+model PromoCodeUsage {
+  id            String    @id @default(cuid())
+  promoCodeId   String
+  promoCode     PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Cascade)
+  bookingId     String    @unique
+  booking       Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email         String
+  discountMinor Int
+  createdAt     DateTime  @default(now())
+
+  @@index([promoCodeId, email])
+  @@index([promoCodeId, userId])
+}
+
+// ---------------------------------------------------------------- entry management
+
+model CheckIn {
+  id            String        @id @default(cuid())
+  /// Null when the scanned code matched no ticket.
+  ticketId      String?
+  ticket        Ticket?       @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+  eventId       String
+  event         Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  scannerUserId String
+  scannerUser   User          @relation(fields: [scannerUserId], references: [id], onDelete: Restrict)
+  deviceId      String?
+  device        ScannerDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  gate          String?
+  result        CheckInResult
+  method        String        @default("QR")
+  createdAt     DateTime      @default(now())
+
+  // A partial unique index (one ACCEPTED row per ticket) is added in the integrity migration.
+  @@index([eventId, createdAt])
+  @@index([eventId, result])
+  @@index([ticketId])
+}
+
+model ScannerDevice {
+  id             String        @id @default(cuid())
+  /// Random id generated and stored by the scanning browser.
+  deviceKey      String        @unique
+  name           String
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId        String?
+  event          Event?        @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  lastSeenAt     DateTime      @default(now())
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  checkIns CheckIn[]
+
+  @@index([userId])
+  @@index([eventId])
+}
+
+model StaffAssignment {
+  id           String   @id @default(cuid())
+  eventId      String
+  event        Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation("StaffUser", fields: [userId], references: [id], onDelete: Cascade)
+  gate         String?
+  assignedById String?
+  assignedBy   User?    @relation("StaffAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([eventId, userId])
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------- platform
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType @default(SYSTEM)
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+model Review {
+  id        String   @id @default(cuid())
+  eventId   String
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating    Int
+  comment   String?
+  isHidden  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([eventId, userId])
+  @@index([eventId, isHidden])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model PlatformSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model CmsPage {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  body        String
+  /// "help" pages show in the Help Center; "legal"/"company" pages link from the footer.
+  section     String   @default("company")
+  sortOrder   Int      @default(0)
+  isPublished Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([section, isPublished, sortOrder])
+}
+
+model NewsletterSubscriber {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+model EmailLog {
+  id         String      @id @default(cuid())
+  to         String
+  subject    String
+  template   String
+  status     EmailStatus
+  providerId String?
+  error      String?
+  createdAt  DateTime    @default(now())
+
+  @@index([createdAt])
+  @@index([to])
+}
+
+/// Fixed-window counters, stored in Postgres so limits hold across app instances.
+model RateLimit {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
+}
